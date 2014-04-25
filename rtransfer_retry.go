@@ -1,9 +1,12 @@
 package rtransfer
 
 import (
+	"log"
 	"net"
 	"time"
 )
+
+const maxRetryTime = time.Second * 20
 
 type Dialer interface {
 	Dial() (net.Conn, error)
@@ -13,9 +16,12 @@ func SendRetry(dialer Dialer, fpath string, notifier SendNotifier) {
 	retryTime := time.Millisecond * 200
 
 	cleanup := func(conn net.Conn) {
+		log.Printf("Retrying after %v", retryTime)
 		c := time.After(retryTime)
 		conn.Close()
-		retryTime *= 2
+		if retryTime < maxRetryTime {
+			retryTime *= 2
+		}
 		<-c
 	}
 
