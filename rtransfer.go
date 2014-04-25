@@ -104,7 +104,7 @@ func Send(conn net.Conn, fpath string, notifier SendNotifier) error {
 	seqNum := ack.SeqNum
 	for seqNum < numBlocks {
 		dataMsg := dataMessage{SeqNum: seqNum, Data: make([]byte, payloadSize)}
-		if n, err := f.Read(dataMsg.Data[:]); err != io.EOF && err != nil {
+		if n, err := f.Read(dataMsg.Data); err != io.EOF && err != nil {
 			return err
 		} else if err == io.EOF && seqNum != numBlocks-1 {
 			return fmt.Errorf(
@@ -211,9 +211,9 @@ func (srv *server) recv(conn net.Conn, createNotifier func() RecvNotifier) error
 		var dataMsg dataMessage
 		if err := dec.Decode(&dataMsg); err != nil {
 			return err
+		if _, err := f.WriteAt(dataMsg.Data, getFilePos(srv.seqNum)); err != nil {
 		}
 
-		if _, err := f.WriteAt(dataMsg.Data[:], getFilePos(seqNum)); err != nil {
 			return err
 		}
 
