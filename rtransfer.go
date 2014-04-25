@@ -4,7 +4,6 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"os"
 	"path"
@@ -248,7 +247,6 @@ func (srv *server) Serve(createNotifier func() RecvNotifier) error {
 		}
 
 		if err := srv.recv(conn, createNotifier); err != nil {
-			log.Println("a receive operation failed")
 			continue
 		}
 	}
