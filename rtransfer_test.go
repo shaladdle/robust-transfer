@@ -9,6 +9,44 @@ import (
 	"github.com/shaladdle/goaaw/testutil"
 )
 
+type logSendNotifier struct {
+	t *testing.T
+}
+
+func (sn *logSendNotifier) SendStart() {
+	sn.t.Log("CLI Sending start message")
+}
+
+func (sn *logSendNotifier) RecvAck() {
+	sn.t.Log("CLI Receiving ack message")
+}
+
+func (sn *logSendNotifier) UpdateProgress(numBytes, totBytes int64) {
+	sn.t.Logf("CLI Sent %d/%d bytes", numBytes, totBytes)
+}
+
+type logRecvNotifier struct {
+	t *testing.T
+}
+
+func newLogRecvNotifierFactory(t *testing.T) func() RecvNotifier {
+	return func() RecvNotifier {
+		return &logRecvNotifier{t}
+	}
+}
+
+func (sn *logRecvNotifier) SendAck() {
+	sn.t.Log("SRV Sending ack message")
+}
+
+func (sn *logRecvNotifier) RecvStart() {
+	sn.t.Log("SRV Receiving start message")
+}
+
+func (sn *logRecvNotifier) UpdateProgress(numBytes, totBytes int64) {
+	sn.t.Logf("SRV Received %d/%d bytes", numBytes, totBytes)
+}
+
 func transferTest(sizes []int64, srvHostport string, t *testing.T) {
 	dpath, err := testutil.CreateTestDir()
 	if err != nil {
@@ -47,7 +85,7 @@ func transferTest(sizes []int64, srvHostport string, t *testing.T) {
 	}
 	defer listener.Close()
 	srv := NewServer(listener, serverDir)
-	go srv.Serve()
+	go srv.Serve(newLogRecvNotifierFactory(t))
 
 	for _, fname := range files {
 		conn, err := net.Dial("tcp", srvHostport)
@@ -57,7 +95,7 @@ func transferTest(sizes []int64, srvHostport string, t *testing.T) {
 			continue
 		}
 
-		err = Send(conn, path.Join(clientDir, fname))
+		err = Send(conn, path.Join(clientDir, fname), &logSendNotifier{t})
 		if err != nil {
 			conn.Close()
 			t.Errorf("send of file \"%s\" failed: %s", fname, err)

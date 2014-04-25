@@ -10,6 +10,18 @@ import (
 	"path"
 )
 
+type SendNotifier interface {
+	SendStart()
+	RecvAck()
+	UpdateProgress(numBytes, totBytes int64)
+}
+
+type RecvNotifier interface {
+	SendAck()
+	RecvStart()
+	UpdateProgress(numBytes, totBytes int64)
+}
+
 func init() {
 	gob.Register(startMessage{})
 	gob.Register(ackMessage{})
@@ -51,7 +63,7 @@ func getFilePos(seqNum int) int64 {
 	return int64(seqNum) * int64(payloadSize)
 }
 
-func Send(conn net.Conn, fpath string) error {
+func Send(conn net.Conn, fpath string, notifier SendNotifier) error {
 	enc := gob.NewEncoder(conn)
 	dec := gob.NewDecoder(conn)
 
@@ -60,9 +72,17 @@ func Send(conn net.Conn, fpath string) error {
 		return err
 	}
 
+	if notifier != nil {
+		notifier.SendStart()
+	}
+
 	startMsg := startMessage{info.Name(), info.Size()}
 	if err := enc.Encode(startMsg); err != nil {
 		return err
+	}
+
+	if notifier != nil {
+		notifier.RecvAck()
 	}
 
 	var ack ackMessage
@@ -82,7 +102,8 @@ func Send(conn net.Conn, fpath string) error {
 	}
 
 	numBlocks := getNumBlocks(info.Size())
-	for seqNum := ack.SeqNum; seqNum < numBlocks; seqNum++ {
+	seqNum := ack.SeqNum
+	for seqNum < numBlocks {
 		dataMsg := dataMessage{SeqNum: seqNum, Data: make([]byte, payloadSize)}
 		if n, err := f.Read(dataMsg.Data[:]); err != io.EOF && err != nil {
 			return err
@@ -108,13 +129,19 @@ func Send(conn net.Conn, fpath string) error {
 				"Server acked a payload with a different sequence number, got %d, want %d",
 				dataAckMsg.SeqNum, seqNum)
 		}
+
+		seqNum++
+
+		if notifier != nil {
+			notifier.UpdateProgress(getFilePos(seqNum), info.Size())
+		}
 	}
 
 	return nil
 }
 
 type Server interface {
-	Serve() error
+	Serve(func() RecvNotifier) error
 }
 
 type server struct {
@@ -132,9 +159,15 @@ func NewServer(listener net.Listener, archiveDir string) Server {
 	}
 }
 
-func (srv *server) recv(conn net.Conn) error {
+func (srv *server) recv(conn net.Conn, createNotifier func() RecvNotifier) error {
 	enc := gob.NewEncoder(conn)
 	dec := gob.NewDecoder(conn)
+
+	var notifier RecvNotifier
+	if createNotifier != nil {
+		notifier = createNotifier()
+		notifier.SendAck()
+	}
 
 	ackMsg := ackMessage{
 		Name:   srv.name,
@@ -143,6 +176,10 @@ func (srv *server) recv(conn net.Conn) error {
 	}
 	if err := enc.Encode(ackMsg); err != nil {
 		return err
+	}
+
+	if createNotifier != nil {
+		notifier.RecvStart()
 	}
 
 	var startMsg startMessage
@@ -182,6 +219,10 @@ func (srv *server) recv(conn net.Conn) error {
 		}
 
 		seqNum++
+
+		if createNotifier != nil {
+			notifier.UpdateProgress(getFilePos(seqNum), srv.size)
+		}
 	}
 
 	srv.name = ""
@@ -191,14 +232,14 @@ func (srv *server) recv(conn net.Conn) error {
 	return nil
 }
 
-func (srv *server) Serve() error {
+func (srv *server) Serve(createNotifier func() RecvNotifier) error {
 	for {
 		conn, err := srv.listener.Accept()
 		if err != nil {
 			return err
 		}
 
-		if err := srv.recv(conn); err != nil {
+		if err := srv.recv(conn, createNotifier); err != nil {
 			log.Println("a receive operation failed")
 			continue
 		}
