@@ -4,15 +4,17 @@ import (
 	"encoding/gob"
 	"fmt"
 	"io"
+	"log"
 	"net"
 	"os"
-    "path"
+	"path"
 )
 
 func init() {
 	gob.Register(startMessage{})
 	gob.Register(ackMessage{})
 	gob.Register(dataMessage{})
+	gob.Register(dataAckMessage{})
 }
 
 const payloadSize = 4096
@@ -46,7 +48,7 @@ func getNumBlocks(size int64) int {
 }
 
 func getFilePos(seqNum int) int64 {
-    return int64(seqNum) * int64(payloadSize)
+	return int64(seqNum) * int64(payloadSize)
 }
 
 func Send(conn net.Conn, fpath string) error {
@@ -81,7 +83,7 @@ func Send(conn net.Conn, fpath string) error {
 
 	numBlocks := getNumBlocks(info.Size())
 	for seqNum := ack.SeqNum; seqNum < numBlocks; seqNum++ {
-        dataMsg := dataMessage{SeqNum: seqNum, Data: make([]byte, payloadSize)}
+		dataMsg := dataMessage{SeqNum: seqNum, Data: make([]byte, payloadSize)}
 		if n, err := f.Read(dataMsg.Data[:]); err != io.EOF && err != nil {
 			return err
 		} else if err == io.EOF && seqNum != numBlocks-1 {
@@ -89,116 +91,117 @@ func Send(conn net.Conn, fpath string) error {
 				"Hit end of file at %d, while the last block index expected was %d",
 				seqNum, numBlocks-1)
 		} else {
-            dataMsg.Data = dataMsg.Data[:n]
-        }
+			dataMsg.Data = dataMsg.Data[:n]
+		}
 
 		if err := enc.Encode(dataMsg); err != nil {
 			return err
 		}
 
-        var dataAckMsg dataAckMessage
-        if err := dec.Decode(&dataAckMsg); err != nil {
-            return err
-        }
+		var dataAckMsg dataAckMessage
+		if err := dec.Decode(&dataAckMsg); err != nil {
+			return err
+		}
 
-        if dataAckMsg.SeqNum != seqNum {
-            return fmt.Errorf(
-                "Server acked a payload with a different sequence number, got %d, want %d",
-                dataAckMsg.SeqNum, seqNum)
-        }
+		if dataAckMsg.SeqNum != seqNum {
+			return fmt.Errorf(
+				"Server acked a payload with a different sequence number, got %d, want %d",
+				dataAckMsg.SeqNum, seqNum)
+		}
 	}
 
 	return nil
 }
 
 type Server interface {
-    Serve() error
+	Serve() error
 }
 
 type server struct {
-    listener net.Listener
-    archiveDir string
-    name string
-    size int64
-    seqNum int
+	listener   net.Listener
+	archiveDir string
+	name       string
+	size       int64
+	seqNum     int
 }
 
 func NewServer(listener net.Listener, archiveDir string) Server {
-    return &server{
-        listener: listener,
-        archiveDir: archiveDir,
-    }
+	return &server{
+		listener:   listener,
+		archiveDir: archiveDir,
+	}
 }
 
 func (srv *server) recv(conn net.Conn) error {
-    enc := gob.NewEncoder(conn)
-    dec := gob.NewDecoder(conn)
+	enc := gob.NewEncoder(conn)
+	dec := gob.NewDecoder(conn)
 
-    ackMsg := ackMessage{
-        Name: srv.name,
-        Size: srv.size,
-        SeqNum: srv.seqNum,
-    }
-    if err := enc.Encode(ackMsg); err != nil {
-        return err
-    }
+	ackMsg := ackMessage{
+		Name:   srv.name,
+		Size:   srv.size,
+		SeqNum: srv.seqNum,
+	}
+	if err := enc.Encode(ackMsg); err != nil {
+		return err
+	}
 
-    var startMsg startMessage
-    if err := dec.Decode(&startMsg); err != nil {
-        return err
-    }
-    if srv.name == "" {
-        srv.name = startMsg.Name
-        srv.size = startMsg.Size
-        srv.seqNum = 0
-    }
-    if srv.name != "" && startMsg.Name != srv.name {
-        return fmt.Errorf("Client tried to send a file I am not waiting for")
-    }
+	var startMsg startMessage
+	if err := dec.Decode(&startMsg); err != nil {
+		return err
+	}
+	if srv.name == "" {
+		srv.name = startMsg.Name
+		srv.size = startMsg.Size
+		srv.seqNum = 0
+	}
+	if srv.name != "" && startMsg.Name != srv.name {
+		return fmt.Errorf("Client tried to send a file I am not waiting for")
+	}
 
-    fpath := path.Join(srv.archiveDir, srv.name)
-    f, err := os.OpenFile(fpath, os.O_CREATE | os.O_RDWR, 0666)
-    if err != nil {
-        srv.seqNum = 0
-        return err
-    }
+	fpath := path.Join(srv.archiveDir, srv.name)
+	f, err := os.OpenFile(fpath, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		srv.seqNum = 0
+		return err
+	}
 
-    numBlocks := getNumBlocks(srv.size)
-    seqNum := srv.seqNum
-    for seqNum < numBlocks {
-        var dataMsg dataMessage
-        if err := dec.Decode(&dataMsg); err != nil {
-            return err
-        }
+	numBlocks := getNumBlocks(srv.size)
+	seqNum := srv.seqNum
+	for seqNum < numBlocks {
+		var dataMsg dataMessage
+		if err := dec.Decode(&dataMsg); err != nil {
+			return err
+		}
 
-        if _, err := f.WriteAt(dataMsg.Data[:], getFilePos(seqNum)); err != nil {
-            return err
-        }
+		if _, err := f.WriteAt(dataMsg.Data[:], getFilePos(seqNum)); err != nil {
+			return err
+		}
 
-        if err := enc.Encode(dataAckMessage{seqNum}); err != nil {
-            return err
-        }
+		if err := enc.Encode(dataAckMessage{seqNum}); err != nil {
+			return err
+		}
 
-        seqNum++
-    }
+		seqNum++
+	}
 
-    srv.name = ""
-    srv.size = 0
-    srv.seqNum = 0
+	srv.name = ""
+	srv.size = 0
+	srv.seqNum = 0
 
-    return nil
+	return nil
 }
 
 func (srv *server) Serve() error {
-    for {
-        conn, err := srv.listener.Accept()
-        if err != nil {
-            return err
-        }
+	for {
+		conn, err := srv.listener.Accept()
+		if err != nil {
+			return err
+		}
 
-        if err := srv.recv(conn); err != nil {
-            return err
-        }
-    }
+		if err := srv.recv(conn); err != nil {
+			log.Println("a receive operation failed")
+			continue
+		}
+	}
 	return fmt.Errorf("Not implemented")
 }

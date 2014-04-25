@@ -1,8 +1,8 @@
 package rtransfer
 
 import (
-    "os"
 	"net"
+	"os"
 	"path"
 	"testing"
 
@@ -46,7 +46,7 @@ func transferTest(sizes []int64, srvHostport string, t *testing.T) {
 		t.Fatalf("couldn't listen on %s: %s", srvHostport, err)
 	}
 	defer listener.Close()
-    srv := NewServer(listener, serverDir)
+	srv := NewServer(listener, serverDir)
 	go srv.Serve()
 
 	for _, fname := range files {
@@ -85,9 +85,9 @@ func transferTest(sizes []int64, srvHostport string, t *testing.T) {
 		}
 	}
 
-    if err := os.RemoveAll(dpath); err != nil {
-        t.Fatal("Cleanup of temp directory failed:", err)
-    }
+	if err := os.RemoveAll(dpath); err != nil {
+		t.Fatal("Cleanup of temp directory failed:", err)
+	}
 }
 
 func TestSimple(t *testing.T) {
