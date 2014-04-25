@@ -206,25 +206,24 @@ func (srv *server) recv(conn net.Conn, createNotifier func() RecvNotifier) error
 	}
 
 	numBlocks := getNumBlocks(srv.size)
-	seqNum := srv.seqNum
-	for seqNum < numBlocks {
+	for srv.seqNum < numBlocks {
 		var dataMsg dataMessage
 		if err := dec.Decode(&dataMsg); err != nil {
 			return err
+		}
+
 		if _, err := f.WriteAt(dataMsg.Data, getFilePos(srv.seqNum)); err != nil {
-		}
-
 			return err
 		}
 
-		if err := enc.Encode(dataAckMessage{seqNum}); err != nil {
+		if err := enc.Encode(dataAckMessage{srv.seqNum}); err != nil {
 			return err
 		}
 
-		seqNum++
+		srv.seqNum++
 
 		if createNotifier != nil {
-			numBytes := getFilePos(seqNum)
+			numBytes := getFilePos(srv.seqNum)
 			if numBytes > srv.size {
 				numBytes = srv.size
 			}
