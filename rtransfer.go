@@ -133,7 +133,11 @@ func Send(conn net.Conn, fpath string, notifier SendNotifier) error {
 		seqNum++
 
 		if notifier != nil {
-			notifier.UpdateProgress(getFilePos(seqNum), info.Size())
+			numBytes := getFilePos(seqNum)
+			if numBytes > info.Size() {
+				numBytes = info.Size()
+			}
+			notifier.UpdateProgress(numBytes, info.Size())
 		}
 	}
 
@@ -221,7 +225,11 @@ func (srv *server) recv(conn net.Conn, createNotifier func() RecvNotifier) error
 		seqNum++
 
 		if createNotifier != nil {
-			notifier.UpdateProgress(getFilePos(seqNum), srv.size)
+			numBytes := getFilePos(seqNum)
+			if numBytes > srv.size {
+				numBytes = srv.size
+			}
+			notifier.UpdateProgress(numBytes, srv.size)
 		}
 	}
 
