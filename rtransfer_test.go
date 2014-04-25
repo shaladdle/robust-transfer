@@ -9,24 +9,27 @@ import (
 	"github.com/shaladdle/goaaw/testutil"
 )
 
+const testSrvHostport = ":9000"
+
 type testDialer struct {
 	hostport string
 	lastConn net.Conn
 }
 
-func NewTestDialer(hostport string) *testDialer {
+func newTestDialer(hostport string) *testDialer {
 	return &testDialer{
 		hostport: hostport,
 	}
 }
 
 func (td *testDialer) Dial() (net.Conn, error) {
-	conn, err := net.Dial("tcp", td.hostport)
+	var err error
+	td.lastConn, err = net.Dial("tcp", td.hostport)
 	if err != nil {
 		return nil, err
 	}
 
-	return conn, nil
+	return td.lastConn, nil
 }
 
 func (td *testDialer) Close() {
@@ -71,7 +74,7 @@ func (sn *logRecvNotifier) UpdateProgress(numBytes, totBytes int64) {
 	sn.t.Logf("SRV Received %d/%d bytes", numBytes, totBytes)
 }
 
-func transferTest(sizes []int64, srvHostport string, t *testing.T) {
+func transferTest(sizes []int64, srvHostport string, dialer Dialer, t *testing.T, sendNotifier SendNotifier) {
 	dpath, err := testutil.CreateTestDir()
 	if err != nil {
 		t.Fatalf("Couldn't create test directory")
@@ -112,10 +115,9 @@ func transferTest(sizes []int64, srvHostport string, t *testing.T) {
 	go srv.Serve(newLogRecvNotifierFactory(t))
 
 	for _, fname := range files {
-		dialer := NewTestDialer(srvHostport)
 		fpath := path.Join(clientDir, fname)
 
-		SendRetry(dialer, fpath, &logSendNotifier{t})
+		SendRetry(dialer, fpath, sendNotifier)
 	}
 
 	for _, fname := range files {
@@ -142,11 +144,13 @@ func transferTest(sizes []int64, srvHostport string, t *testing.T) {
 }
 
 func TestSimple(t *testing.T) {
-	transferTest([]int64{1024 * 1024}, ":9000", t)
+	dialer := newTestDialer(testSrvHostport)
+	transferTest([]int64{1024 * 1024}, testSrvHostport, dialer, t, &logSendNotifier{t})
 }
 
 func TestSmall(t *testing.T) {
-	transferTest([]int64{12}, ":9000", t)
+	dialer := newTestDialer(testSrvHostport)
+	transferTest([]int64{12}, testSrvHostport, dialer, t, &logSendNotifier{t})
 }
 
 func TestMulti(t *testing.T) {
@@ -158,43 +162,75 @@ func TestMulti(t *testing.T) {
 		5 * MB,
 		5 * MB,
 	}
-	transferTest(sizes, ":9000", t)
+	dialer := newTestDialer(testSrvHostport)
+	transferTest(sizes, testSrvHostport, dialer, t, &logSendNotifier{t})
 }
+
+const (
+	rtTestSendStart = iota
+	rtTestRecvAck
+	rtTestUpdateProgress
+)
 
 type clientCrashSendNotifier struct {
-	sendStart      chan bool
-	recvAck        chan bool
-	updateProgress chan bool
+	crashed     bool
+	dialer      *testDialer
+	crashAt     int
+	logNotifier *logSendNotifier
 }
 
-/*
-func TestClientCrash(t *testing.T) {
-	sendComplete := make(chan bool)
-
-	fpath := ""
-
-	dialer := NewCrashDialer(srvHostport)
-
-	go func() {
-		SendRetry(dialer, srvHostport)
-		sendComplete <- true
-	}()
-
-	for {
-		select {
-		case <-sendStart:
-			dialer.Close()
-			sendStart <- true
-		case <-recvAck:
-			sendStart <- true
-		case <-updateProgress:
-			sendStart <- true
-		case <-sendComplete:
-			sendStart <- true
-		}
+func newClientCrashSendNotifier(dialer *testDialer, t *testing.T, crashAt int) *clientCrashSendNotifier {
+	return &clientCrashSendNotifier{
+		dialer:      dialer,
+		crashAt:     crashAt,
+		logNotifier: &logSendNotifier{t},
 	}
 }
-*/
+
+func (cn *clientCrashSendNotifier) SendStart() {
+	cn.logNotifier.SendStart()
+
+	if !cn.crashed && cn.crashAt != rtTestSendStart {
+		cn.dialer.Close()
+		cn.crashed = true
+	}
+}
+
+func (cn *clientCrashSendNotifier) RecvAck() {
+	cn.logNotifier.RecvAck()
+
+	if !cn.crashed && cn.crashAt != rtTestRecvAck {
+		cn.dialer.Close()
+		cn.crashed = true
+	}
+}
+
+func (cn *clientCrashSendNotifier) UpdateProgress(numBytes, totBytes int64) {
+	cn.logNotifier.UpdateProgress(numBytes, totBytes)
+
+	if !cn.crashed && cn.crashAt != rtTestUpdateProgress {
+		cn.dialer.Close()
+		cn.crashed = true
+	}
+}
+
+func clientCrashTest(crashAt int, t *testing.T) {
+	dialer := newTestDialer(testSrvHostport)
+	sendNotifier := newClientCrashSendNotifier(dialer, t, crashAt)
+	transferTest([]int64{1024 * 10}, testSrvHostport, dialer, t, sendNotifier)
+}
+
+func TestClientCrashStart(t *testing.T) {
+	clientCrashTest(rtTestSendStart, t)
+}
+
+func TestClientCrashAck(t *testing.T) {
+	clientCrashTest(rtTestRecvAck, t)
+}
+
+func TestClientCrashUpdate(t *testing.T) {
+	clientCrashTest(rtTestUpdateProgress, t)
+}
 
 func TestServerCrash(t *testing.T) {
 }
