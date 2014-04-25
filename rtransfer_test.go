@@ -9,6 +9,30 @@ import (
 	"github.com/shaladdle/goaaw/testutil"
 )
 
+type testDialer struct {
+	hostport string
+	lastConn net.Conn
+}
+
+func NewTestDialer(hostport string) *testDialer {
+	return &testDialer{
+		hostport: hostport,
+	}
+}
+
+func (td *testDialer) Dial() (net.Conn, error) {
+	conn, err := net.Dial("tcp", td.hostport)
+	if err != nil {
+		return nil, err
+	}
+
+	return conn, nil
+}
+
+func (td *testDialer) Close() {
+	td.lastConn.Close()
+}
+
 type logSendNotifier struct {
 	t *testing.T
 }
@@ -88,21 +112,10 @@ func transferTest(sizes []int64, srvHostport string, t *testing.T) {
 	go srv.Serve(newLogRecvNotifierFactory(t))
 
 	for _, fname := range files {
-		conn, err := net.Dial("tcp", srvHostport)
-		if err != nil {
-			conn.Close()
-			t.Errorf("couldn't dial %s: %s", srvHostport, err)
-			continue
-		}
+		dialer := NewTestDialer(srvHostport)
+		fpath := path.Join(clientDir, fname)
 
-		err = Send(conn, path.Join(clientDir, fname), &logSendNotifier{t})
-		if err != nil {
-			conn.Close()
-			t.Errorf("send of file \"%s\" failed: %s", fname, err)
-			continue
-		}
-
-		conn.Close()
+		SendRetry(dialer, fpath, &logSendNotifier{t})
 	}
 
 	for _, fname := range files {
@@ -148,8 +161,40 @@ func TestMulti(t *testing.T) {
 	transferTest(sizes, ":9000", t)
 }
 
-func TestServerCrash(t *testing.T) {
+type clientCrashSendNotifier struct {
+	sendStart      chan bool
+	recvAck        chan bool
+	updateProgress chan bool
 }
 
+/*
 func TestClientCrash(t *testing.T) {
+	sendComplete := make(chan bool)
+
+	fpath := ""
+
+	dialer := NewCrashDialer(srvHostport)
+
+	go func() {
+		SendRetry(dialer, srvHostport)
+		sendComplete <- true
+	}()
+
+	for {
+		select {
+		case <-sendStart:
+			dialer.Close()
+			sendStart <- true
+		case <-recvAck:
+			sendStart <- true
+		case <-updateProgress:
+			sendStart <- true
+		case <-sendComplete:
+			sendStart <- true
+		}
+	}
+}
+*/
+
+func TestServerCrash(t *testing.T) {
 }
