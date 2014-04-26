@@ -204,6 +204,7 @@ func (srv *server) recv(conn net.Conn, createNotifier func() RecvNotifier) error
 		srv.seqNum = 0
 		return err
 	}
+	defer f.Close()
 
 	numBlocks := getNumBlocks(srv.size)
 	for srv.seqNum < numBlocks {
