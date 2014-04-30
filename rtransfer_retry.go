@@ -1,7 +1,6 @@
 package rtransfer
 
 import (
-	"log"
 	"net"
 	"time"
 )
@@ -16,7 +15,7 @@ func SendRetry(dialer Dialer, fpath string, notifier SendNotifier) {
 	retryTime := time.Millisecond * 200
 
 	cleanup := func(conn net.Conn) {
-		log.Printf("Retrying after %v", retryTime)
+		logf("retrying after %v", retryTime)
 		c := time.After(retryTime)
 		conn.Close()
 		if retryTime < maxRetryTime {
@@ -28,11 +27,13 @@ func SendRetry(dialer Dialer, fpath string, notifier SendNotifier) {
 	for {
 		conn, err := dialer.Dial()
 		if err != nil {
+			logf("Dial error: %v", err)
 			cleanup(conn)
 			continue
 		}
 
 		if err := Send(conn, fpath, notifier); err != nil {
+			logf("Send error: %v", err)
 			cleanup(conn)
 			continue
 		}

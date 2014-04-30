@@ -9,6 +9,31 @@ import (
 	"path"
 )
 
+const (
+	ErrSuccess = iota
+	ErrAlreadyExists
+	ErrEmptyFilename
+	ErrWrongFile
+	ErrOpen
+)
+
+func strErrMsg(errType int) string {
+	switch errType {
+	case ErrSuccess:
+		return "success"
+	case ErrAlreadyExists:
+		return "the file already exists"
+	case ErrEmptyFilename:
+		return "attempt to copy a file with an empty file name"
+	case ErrWrongFile:
+		return "attempt to copy a different file than the one the server is currently waiting for"
+	case ErrOpen:
+		return "could not open the file for writing on the server"
+	default:
+		return "unkown error"
+	}
+}
+
 type SendNotifier interface {
 	SendStart()
 	RecvAck()
@@ -36,9 +61,10 @@ type startMessage struct {
 }
 
 type ackMessage struct {
-	Name   string
-	SeqNum int
-	Size   int64
+	Name    string
+	SeqNum  int
+	Size    int64
+	ErrType int
 }
 
 type dataMessage struct {
@@ -84,15 +110,17 @@ func Send(conn net.Conn, fpath string, notifier SendNotifier) error {
 		notifier.RecvAck()
 	}
 
+	logln("Decoding ack")
+
 	var ack ackMessage
 	if err := dec.Decode(&ack); err != nil {
 		return err
 	}
 
-	if ack.Name != "" && ack.Name != info.Name() {
-		return fmt.Errorf(
-			"The server is expecting a file named %s, while we are trying to send %s",
-			ack.Name, info.Name())
+	logln("Decoded ack")
+
+	if ack.ErrType != ErrSuccess {
+		return fmt.Errorf(strErrMsg(ack.ErrType))
 	}
 
 	f, err := os.Open(fpath)
@@ -162,23 +190,27 @@ func NewServer(listener net.Listener, archiveDir string) Server {
 	}
 }
 
+func fileExists(fpath string) bool {
+	if _, err := os.Stat(fpath); err != nil {
+		return false
+	}
+	return true
+}
+
 func (srv *server) recv(conn net.Conn, createNotifier func() RecvNotifier) error {
 	enc := gob.NewEncoder(conn)
 	dec := gob.NewDecoder(conn)
 
+	sendClientErr := func(errType int, err error) error {
+		if err := enc.Encode(ackMessage{ErrType: errType}); err != nil {
+			return fmt.Errorf("Error sending client an error message: %v", err)
+		}
+		return err
+	}
+
 	var notifier RecvNotifier
 	if createNotifier != nil {
 		notifier = createNotifier()
-		notifier.SendAck()
-	}
-
-	ackMsg := ackMessage{
-		Name:   srv.name,
-		Size:   srv.size,
-		SeqNum: srv.seqNum,
-	}
-	if err := enc.Encode(ackMsg); err != nil {
-		return err
 	}
 
 	if createNotifier != nil {
@@ -189,22 +221,47 @@ func (srv *server) recv(conn net.Conn, createNotifier func() RecvNotifier) error
 	if err := dec.Decode(&startMsg); err != nil {
 		return err
 	}
+
+	if startMsg.Name == "" {
+		return sendClientErr(ErrEmptyFilename,
+			fmt.Errorf("Client tried to send a file with no name"))
+	} else if srv.name != "" && srv.name != startMsg.Name {
+		retErr := fmt.Errorf("Client wants to send %s, but I'm waiting for %s",
+			startMsg.Name, srv.name)
+		return sendClientErr(ErrWrongFile, retErr)
+	}
+
+	fpath := path.Join(srv.archiveDir, startMsg.Name)
+
+	if fileExists(fpath) && srv.name != startMsg.Name {
+		return sendClientErr(ErrAlreadyExists,
+			fmt.Errorf("Client tried to send a file (%s) that already exists", startMsg.Name))
+	}
+
+	f, err := os.OpenFile(fpath, os.O_CREATE|os.O_RDWR, 0666)
+	if err != nil {
+		return sendClientErr(ErrOpen, err)
+	}
+	defer f.Close()
+
 	if srv.name == "" {
 		srv.name = startMsg.Name
 		srv.size = startMsg.Size
 		srv.seqNum = 0
 	}
-	if srv.name != "" && startMsg.Name != srv.name {
-		return fmt.Errorf("Client tried to send a file I am not waiting for")
+	if createNotifier != nil {
+		notifier.SendAck()
 	}
 
-	fpath := path.Join(srv.archiveDir, srv.name)
-	f, err := os.OpenFile(fpath, os.O_CREATE|os.O_RDWR, 0666)
-	if err != nil {
-		srv.seqNum = 0
+	ackMsg := ackMessage{
+		Name:    srv.name,
+		Size:    srv.size,
+		SeqNum:  srv.seqNum,
+		ErrType: ErrSuccess,
+	}
+	if err := enc.Encode(ackMsg); err != nil {
 		return err
 	}
-	defer f.Close()
 
 	numBlocks := getNumBlocks(srv.size)
 	for srv.seqNum < numBlocks {
@@ -247,6 +304,7 @@ func (srv *server) Serve(createNotifier func() RecvNotifier) error {
 		}
 
 		if err := srv.recv(conn, createNotifier); err != nil {
+			logf("recv returned an error: %v", err)
 			continue
 		}
 	}
