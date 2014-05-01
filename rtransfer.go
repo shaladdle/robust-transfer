@@ -148,14 +148,10 @@ func send(conn net.Conn, fpath string, notifier SendNotifier) error {
 		notifier.RecvAck()
 	}
 
-	logln("Decoding ack")
-
 	var ack ackMessage
 	if err := dec.Decode(&ack); err != nil {
 		return err
 	}
-
-	logln("Decoded ack")
 
 	if ack.ErrType != ErrSuccess {
 		return fmt.Errorf(strErrMsg(ack.ErrType))
