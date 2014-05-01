@@ -117,7 +117,9 @@ func transferTest(sizes []int64, srvHostport string, dialer Dialer, t *testing.T
 	for _, fname := range files {
 		fpath := path.Join(clientDir, fname)
 
-		Send(dialer, fpath, sendNotifier)
+		if err := Send(dialer, fpath, sendNotifier); err != nil {
+			t.Fatalf("Error while sending file %s: %v", fpath, err)
+		}
 	}
 
 	for _, fname := range files {

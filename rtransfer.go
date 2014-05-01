@@ -17,14 +17,16 @@ type Dialer interface {
 }
 
 const (
-	ErrSuccess = iota
+	ErrSuccess = rtErrno(iota)
 	ErrAlreadyExists
 	ErrEmptyFilename
 	ErrWrongFile
 	ErrOpen
 )
 
-func strErrMsg(errType int) string {
+type rtErrno int
+
+func (errType rtErrno) Error() string {
 	switch errType {
 	case ErrSuccess:
 		return "success"
@@ -71,7 +73,7 @@ type ackMessage struct {
 	Name    string
 	SeqNum  int
 	Size    int64
-	ErrType int
+	ErrType rtErrno
 }
 
 type dataMessage struct {
@@ -95,7 +97,7 @@ func getFilePos(seqNum int) int64 {
 	return int64(seqNum) * int64(payloadSize)
 }
 
-func Send(dialer Dialer, fpath string, notifier SendNotifier) {
+func Send(dialer Dialer, fpath string, notifier SendNotifier) error {
 	retryTime := time.Millisecond * 200
 
 	cleanup := func(conn net.Conn) {
@@ -116,7 +118,17 @@ func Send(dialer Dialer, fpath string, notifier SendNotifier) {
 			continue
 		}
 
-		if err := send(conn, fpath, notifier); err != nil {
+		err = send(conn, fpath, notifier)
+
+		// If the error was due to a malformed or invalid send request, don't
+		// retry.
+		if _, ok := err.(rtErrno); ok {
+			conn.Close()
+			return err
+		}
+
+		// If the error was due to a connection issue, try again.
+		if err != nil {
 			logf("Send error: %v", err)
 			cleanup(conn)
 			continue
@@ -124,6 +136,8 @@ func Send(dialer Dialer, fpath string, notifier SendNotifier) {
 
 		break
 	}
+
+	return nil
 }
 
 func send(conn net.Conn, fpath string, notifier SendNotifier) error {
@@ -154,7 +168,8 @@ func send(conn net.Conn, fpath string, notifier SendNotifier) error {
 	}
 
 	if ack.ErrType != ErrSuccess {
-		return fmt.Errorf(strErrMsg(ack.ErrType))
+		var ret error = ack.ErrType
+		return ret
 	}
 
 	f, err := os.Open(fpath)
@@ -235,7 +250,7 @@ func (srv *server) recv(conn net.Conn, createNotifier func() RecvNotifier) error
 	enc := gob.NewEncoder(conn)
 	dec := gob.NewDecoder(conn)
 
-	sendClientErr := func(errType int, err error) error {
+	sendClientErr := func(errType rtErrno, err error) error {
 		if err := enc.Encode(ackMessage{ErrType: errType}); err != nil {
 			return fmt.Errorf("Error sending client an error message: %v", err)
 		}
