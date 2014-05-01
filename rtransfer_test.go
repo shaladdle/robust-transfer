@@ -117,7 +117,7 @@ func transferTest(sizes []int64, srvHostport string, dialer Dialer, t *testing.T
 	for _, fname := range files {
 		fpath := path.Join(clientDir, fname)
 
-		SendRetry(dialer, fpath, sendNotifier)
+		Send(dialer, fpath, sendNotifier)
 	}
 
 	for _, fname := range files {
