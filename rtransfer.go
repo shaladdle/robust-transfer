@@ -30,7 +30,7 @@ func strErrMsg(errType int) string {
 	case ErrOpen:
 		return "could not open the file for writing on the server"
 	default:
-		return "unkown error"
+		return "unknown error"
 	}
 }
 
