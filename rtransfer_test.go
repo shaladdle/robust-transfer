@@ -110,9 +110,9 @@ func transferTest(sizes []int64, srvHostport string, dialer Dialer, t *testing.T
 	if err != nil {
 		t.Fatalf("couldn't listen on %s: %s", srvHostport, err)
 	}
-	defer listener.Close()
 	srv := NewServer(listener, serverDir)
 	go srv.Serve(newLogRecvNotifierFactory(t))
+	defer srv.Stop()
 
 	for _, fname := range files {
 		fpath := path.Join(clientDir, fname)

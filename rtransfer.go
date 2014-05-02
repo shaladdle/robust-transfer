@@ -222,6 +222,7 @@ func send(conn net.Conn, fpath string, notifier SendNotifier) error {
 
 type Server interface {
 	Serve(func() RecvNotifier) error
+	Stop()
 }
 
 type server struct {
@@ -358,4 +359,9 @@ func (srv *server) Serve(createNotifier func() RecvNotifier) error {
 		}
 	}
 	return fmt.Errorf("Not implemented")
+}
+
+func (srv *server) Stop() {
+	// TODO: Wait for outstanding connections to finish
+	srv.listener.Close()
 }
