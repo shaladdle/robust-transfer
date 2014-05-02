@@ -14,12 +14,16 @@ func (s simpleDialer) Dial() (net.Conn, error) {
 
 type Daemon interface {
 	Serve() error
+	Stop()
 }
 
 type daemon struct {
 	dmnHostport string
 	srvHostport string
 	newFiles    chan string
+	stop        chan bool
+	stopped     bool
+	listener    net.Listener
 }
 
 func NewDaemon(dmnHostport, srvHostport string) Daemon {
@@ -27,6 +31,7 @@ func NewDaemon(dmnHostport, srvHostport string) Daemon {
 		dmnHostport: dmnHostport,
 		srvHostport: srvHostport,
 		newFiles:    make(chan string),
+		stop:        make(chan bool),
 	}
 }
 
@@ -50,13 +55,14 @@ func (d *daemon) handleConn(conn net.Conn) error {
 func (d *daemon) Serve() error {
 	go d.director()
 
-	listener, err := net.Listen("tcp", d.dmnHostport)
+	var err error
+	d.listener, err = net.Listen("tcp", d.dmnHostport)
 	if err != nil {
 		return err
 	}
 
 	for {
-		conn, err := listener.Accept()
+		conn, err := d.listener.Accept()
 		if err != nil {
 			return err
 		}
@@ -79,8 +85,11 @@ func (d *daemon) director() {
 		done <- Send(dialer, fpath, nil)
 	}
 
+Loop:
 	for {
 		select {
+		case <-d.stop:
+			break Loop
 		case fpath := <-d.newFiles:
 			queue.PushBack(fpath)
 
@@ -97,10 +106,17 @@ func (d *daemon) director() {
 			queue.Remove(queue.Front())
 
 			if queue.Len() > 0 {
-				newFpath := queue.Front().Value.(string)
-				go send(newFpath)
+				go send(queue.Front().Value.(string))
 			}
 		}
+	}
+}
+
+func (d *daemon) Stop() {
+	if !d.stopped {
+		d.listener.Close()
+		d.stop <- true
+		d.stopped = true
 	}
 }
 
