@@ -103,7 +103,9 @@ func Send(dialer Dialer, fpath string, notifier SendNotifier) error {
 	cleanup := func(conn net.Conn) {
 		logf("retrying after %v", retryTime)
 		c := time.After(retryTime)
-		conn.Close()
+		if conn != nil {
+			conn.Close()
+		}
 		if retryTime < maxRetryTime {
 			retryTime *= 2
 		}
@@ -123,7 +125,9 @@ func Send(dialer Dialer, fpath string, notifier SendNotifier) error {
 		// If the error was due to a malformed or invalid send request, don't
 		// retry.
 		if _, ok := err.(rtErrno); ok {
-			conn.Close()
+			if conn != nil {
+				conn.Close()
+			}
 			return err
 		}
 
